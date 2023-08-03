@@ -7,6 +7,7 @@ from sec_api import QueryApi, XbrlApi
 import yfinance as yf
 import pandas as pd
 
+#API key for SEC API
 api_key="insert_your_api_key_here"
 
 # Read command line arguments
@@ -45,7 +46,7 @@ def create_excel_copy(ticker):
 def fetchandinsert(ticker, start_year, end_year):
     queryApi = QueryApi(api_key)
 
-    #use sec query api to get all filings of a company filed between the periods.
+    # Use SEC query_api to get all filings of a company filed between the periods.
     query = {
         "query": { "query_string": {
         "query": "ticker:{} AND filedAt:{{ {}-01-01 TO {}-12-31 }} AND formType:\"10-K\"".format(ticker, start_year, end_year)
@@ -61,13 +62,13 @@ def fetchandinsert(ticker, start_year, end_year):
     num_filings = sum(1 for filing in filings if filing['formType'] == '10-K')
     print(f"Number of filings: {num_filings}")
     
-    #insert columns (already space for one filing in template so no need to insert all)
+    # Insert columns (already space for one filing in template so no need to insert all)
     num_columns = num_filings - 1
 
-    #start with earlier years
+    # Start with earlier years
     filings.reverse()
 
-    #load new file using openpyxl 
+    # Load new file using openpyxl 
     filename = f"{ticker}.xlsx"
     workbook = load_workbook(filename)
     sheet = workbook["Model"]
@@ -76,7 +77,7 @@ def fetchandinsert(ticker, start_year, end_year):
     # Insert columns starting at column C (3rd column)
     sheet.insert_cols(3, num_columns)
 
-    #get and insert price and beta from yahoo finance
+    # Retrieve and insert price and beta from yahoo finance
     stock = yf.Ticker(ticker)
     current_price = stock.info.get("regularMarketPreviousClose")
     market_cap = stock.info.get('marketCap')
@@ -84,7 +85,7 @@ def fetchandinsert(ticker, start_year, end_year):
     main['C3'] = current_price
     main['F4'] = beta
     
-    #get most recent years interest expense for cost of debt calculation - yfis stands for yahoo finance income statement
+    # Get most recent years interest expense for cost of debt calculation - yfis stands for yahoo finance income statement
     yfis = stock.income_stmt
     interest_expense = yfis.iloc[yfis.index == 'Interest Expense', 0].values[0]
 
@@ -98,7 +99,7 @@ def fetchandinsert(ticker, start_year, end_year):
         xbrlApi = XbrlApi(api_key)
         xbrl_json = xbrlApi.xbrl_to_json(htm_url=url)
 
-        # Check if the current filing is the last '10-K' filing - use most recent information for this part
+        # Check if the current filing is the last '10-K' filing - use most recent information for this part (Shares, Cash, Debt)
         if filing == filings[-1]:
             Shares = int(xbrl_json['StatementsOfIncome'].get('WeightedAverageNumberOfSharesOutstandingBasic', [{'value': '0'}])[0]['value'])
             Cash = int(xbrl_json['BalanceSheets'].get('CashAndCashEquivalentsAtCarryingValue', [{'value': '0'}])[0]['value']) +\
@@ -111,7 +112,7 @@ def fetchandinsert(ticker, start_year, end_year):
             main['C4'] = Shares
             main['I6'] = interest_expense
         
-        # only use the information from the highest year to avoid overlap
+        # Only use the information from the highest year to avoid overlap
         years = [x['period']['endDate'].split('-')[0] for x in xbrl_json['StatementsOfIncome']['NetIncomeLoss']]
 
         highest_year = max(years)
@@ -129,7 +130,7 @@ def fetchandinsert(ticker, start_year, end_year):
                 date = item['period']['endDate']
                 year = date.split("-")[0]
 
-                # Retrieve revenue associated with the highest year - If value is under different heading return 0
+                # Retrieve the following values associated with the highest year - If value is under different heading return 0
                 Revenue = int(xbrl_json['StatementsOfIncome'].get('RevenueFromContractWithCustomerExcludingAssessedTax', [{'value': '0'}])[0]['value']) + \
                     int(xbrl_json['StatementsOfIncome'].get('Revenues', [{'value': '0'}])[0]['value']) + \
                     int(xbrl_json['StatementsOfIncome'].get('SalesRevenueNet', [{'value': '0'}])[0]['value'])
@@ -161,6 +162,7 @@ def fetchandinsert(ticker, start_year, end_year):
                 column_letter = str(chr(67 + i))  # Starts from 'C' (66 in ASCII)
 
                 Gross_Profit = Revenue - COGS
+                
                 # Write information into the corresponding column (divided by 1000)
                 sheet[column_letter + '1'] = year
                 
@@ -184,12 +186,12 @@ def fetchandinsert(ticker, start_year, end_year):
                 print(f"Inserted data for {year}")
                 i+=1
     
-    #format columns
-    actcol= str(chr(68 + num_columns)) #(D) by default - actual column i want edited
-    refcol = str(chr(67 + num_columns)) #(C) by default - column being referencened in formula
-    for i in range(7): #seven - from 2023 to 2029
+    # Format columns
+    actcol= str(chr(68 + num_columns)) # (D) by default - actual column to be edited
+    refcol = str(chr(67 + num_columns)) # (C) by default - column being referencened in formula
+    for i in range(7): # Seven years- from 2023 to 2029
         sheet[actcol + '6'] = '=' + refcol + '6*(1+$B$31)' #revenue
-        sheet[actcol + '8'] = '=' + actcol + '6-' + actcol + '10' # Cogs
+        sheet[actcol + '8'] = '=' + actcol + '6-' + actcol + '10' #cogs
         sheet[actcol + '9'] = '=' + refcol + '9*(1+$B$32)' # gross margin
         sheet[actcol + '10'] = '=' + actcol + '6*' + actcol + '9'
         sheet[actcol + '11'] = '=' + refcol + '11*(1+$B$33)' #r&d
@@ -200,7 +202,7 @@ def fetchandinsert(ticker, start_year, end_year):
         sheet[actcol + '16'] = '=' + actcol + '10-' + actcol + '15' #opinc
         sheet[actcol + '17'] = '=' + refcol + '17*(1+$B$37)' #interest
         sheet[actcol + '18'] = '=' + refcol + '18*(1+$B$38)' #other nonop
-        sheet[actcol + '19'] = '=' + actcol + '16+' + actcol + '17+' + actcol + '18' # pretax income
+        sheet[actcol + '19'] = '=' + actcol + '16+' + actcol + '17+' + actcol + '18' #pretax income
         sheet[actcol + '20'] = '=' + refcol + '20*(1+$B$39)' #taxes
         sheet[actcol + '21'] = '=' + actcol + '19-' + actcol + '20' #net income
         sheet[actcol + '24'] = '=' + refcol + '24*(1+$B$40)' #shares
@@ -210,7 +212,7 @@ def fetchandinsert(ticker, start_year, end_year):
         actcol = str(chr(ord(actcol) + 1))
         refcol = str(chr(ord(refcol) + 1))
     
-    #revenue year on year formula
+    # Revenue year on year formula
     d_column = str(chr(68))
     c_column = str(chr(67))
     formatall = 6 + num_columns
@@ -219,14 +221,14 @@ def fetchandinsert(ticker, start_year, end_year):
         d_column = str(chr(ord(d_column)+1))
         c_column = str(chr(ord(c_column)+1))
 
-    #gross margin and pretax income formula
+    # Gross margin and pretax income formula
     c_column = str(chr(67))
     for k in range(num_columns + 1):
         sheet[c_column + '9'] = '=' + c_column + '10/' + c_column + '6' #gross margin
         sheet[c_column + '19'] = '=' + c_column + '16+' + c_column + '17+' + c_column + '18' #pretax income
         c_column = str(chr(ord(c_column)+1))
 
-    #final forecast year in L3 (terminal value calculation) and npv value in C15
+    # Final forecast year in L3 (terminal value calculation) and npv value in C15
     final_col= str(chr(74 + num_columns))
     tv_col = str(chr(75 + num_columns))
     first_col = str(chr(68 + num_columns))
